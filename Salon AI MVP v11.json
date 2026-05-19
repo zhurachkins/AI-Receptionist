@@ -1,0 +1,1820 @@
+{
+  "name": "Salon AI MVP v11",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2784,
+        912
+      ],
+      "id": "d7829b66-4371-4a5d-97f4-f394c952a796",
+      "name": "Telegram Trigger",
+      "webhookId": "54d284b6-86b6-4b0d-a89e-5afe55ece610",
+      "credentials": {
+        "telegramApi": {
+          "id": "KbOhUaYPFPbuDhJo",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Telegram Trigger').first().json.message?.text || '' }}",
+        "options": {
+          "systemMessage": "You are an AI receptionist for a beauty salon.\n\nYour task:\n- Understand user's intent: booking, cancellation, reschedule, availability question, or FAQ.\n- Extract relevant fields (name, service, date, time, etc.) from the conversation.\n- Output ONLY one of the following exact formats, nothing else.\n\nFor booking:\nBOOKING REQUEST READY\nName: [extracted name]\nService: [extracted service]\nDate: [extracted date]\nTime: [extracted time]\n\nFor cancellation:\nCANCEL DETAILS\nName: [extracted name]\nDate: [extracted date]\nTime: [extracted time]\n\nFor reschedule:\nRESCHEDULE DETAILS\nName: [extracted name]\nCurrent Date: [current date]\nCurrent Time: [current time]\nNew Date: [new date]\nNew Time: [new time]\n\nIf not enough info for any of the above → output exactly:\nCANCEL REQUEST\nor\nRESCHEDULE REQUEST\n\nIf user asks about availability (e.g., \"free tomorrow\") → respond naturally without special format.\nIf user asks FAQ (address, hours, parking, Instagram) → respond naturally.\nNever add extra text, explanations, or JSON."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -2464,
+        912
+      ],
+      "id": "b51a650c-e93d-46bb-b5f0-e3b500c0e92c",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1-mini"
+        },
+        "responsesApiEnabled": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -2592,
+        1248
+      ],
+      "id": "9cf4e104-feaa-494b-8a2a-233e58698940",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "4CRTxvpm0XizgR6b",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Telegram Trigger').first().json.message?.chat?.id || $('Telegram Trigger').first().json.message?.from?.id || 'unknown-chat' }}",
+        "contextWindowLength": 20
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        -2400,
+        1248
+      ],
+      "id": "ba3ef273-2001-49ac-a159-17d60e61ea91",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "chatId": "749794440",
+        "text": "={{\n'✅ NEW BOOKING REQUEST\\n\\n' +\n\n'Client Telegram name: ' +\n($('Telegram Trigger').first().json.message?.from?.first_name || $('Telegram Trigger').first().json.message?.from?.username || 'Unknown') +\n\n'\\nTelegram ID: ' +\n($('Telegram Trigger').first().json.message?.chat?.id || $('Telegram Trigger').first().json.message?.from?.id || '') +\n\n'\\n\\nName: ' +\n$('Parse Booking Details').first().json.name +\n\n'\\nService: ' +\n$('Parse Booking Details').first().json.service +\n\n'\\nDate: ' +\n$('Parse Booking Details').first().json.pretty_date +\n\n'\\nTime: ' +\n$('Parse Booking Details').first().json.time.substring(0,5) +\n\n'\\nDuration: ' +\n$('Parse Booking Details').first().json.duration_minutes +\n\n' min' +\n\n'\\n\\nClient message:\\n' +\n($('Telegram Trigger').first().json.message?.text || '') +\n\n'\\n\\nCalendar event created: YES'\n}}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": []
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1488,
+        1056
+      ],
+      "id": "d93f33e2-0f3a-4dac-a2bc-e172d8746ab9",
+      "name": "Send Admin New Booking",
+      "webhookId": "5457cd16-1844-4566-b992-4ee0ddcd3a49",
+      "credentials": {
+        "telegramApi": {
+          "id": "2aCMFGrEjdyoRhsd",
+          "name": "Telegram account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const booking = $('Parse Booking Details').first().json;\n// Check for empty calendar events\nlet events = $('Get Calendar Events').all().map(item => item.json);\nif (!events || events.length === 0) {\n  events = []; // Continue with empty events\n}\n\nconst WORK_START_HOUR = 10;\nconst WORK_END_HOUR = 21;\n\nconst SEARCH_WINDOW_MINUTES = 180;\nconst STEP_MINUTES = 15;\n\nconst durationMinutes = booking.duration_minutes || 60;\nconst bufferMinutes = booking.buffer_minutes || 15;\nconst totalMinutes = durationMinutes + bufferMinutes;\n\nfunction pad(n) {\n  return String(n).padStart(2, '0');\n}\n\nfunction timeToMinutes(time) {\n  const [h, m] = String(time).split(':').map(Number);\n  return h * 60 + m;\n}\n\nfunction minutesToTime(total) {\n  const h = Math.floor(total / 60);\n  const m = total % 60;\n  return `${pad(h)}:${pad(m)}`;\n}\n\nfunction eventTimeToMinutes(value, refDate) {\n  if (!value) return null;\n  \n  try {\n    const match = String(value).match(/T(\\d{2}):(\\d{2})/);\n    if (match) {\n      return Number(match[1]) * 60 + Number(match[2]);\n    }\n    if (!value.includes('T')) {\n      return null;\n    }\n    return null;\n  } catch (e) {\n    return null;\n  }\n}\n\nfunction isSameDay(isoDateTime1, isoDateTime2) {\n  const date1 = String(isoDateTime1).split('T')[0];\n  const date2 = String(isoDateTime2).split('T')[0];\n  return date1 === date2;\n}\n\nfunction overlaps(startA, endA, startB, endB) {\n  return startA < endB && endA > startB;\n}\n\nfunction isFree(slotStart, slotEnd) {\n  for (const event of events) {\n    if (!event.start || !event.end) continue;\n\n    const eventStartRaw = event.start.dateTime || event.start.date;\n    const eventEndRaw = event.end.dateTime || event.end.date;\n\n    const eventStart = eventTimeToMinutes(eventStartRaw);\n    const eventEnd = eventTimeToMinutes(eventEndRaw);\n\n    if (eventStart === null || eventEnd === null) continue;\n\n    const blockedStart = eventStart;\n\n    // исправлено: убран двойной буфер\n    const blockedEnd = eventEnd;\n\n    if (overlaps(slotStart, slotEnd, blockedStart, blockedEnd)) {\n      return false;\n    }\n  }\n\n  return true;\n}\n\nconst requestedStartMinutes = timeToMinutes(booking.time);\n\nconst workStartMinutes = WORK_START_HOUR * 60;\nconst workEndMinutes = WORK_END_HOUR * 60;\n\nconst searchStart = Math.max(\n  workStartMinutes,\n  requestedStartMinutes - SEARCH_WINDOW_MINUTES\n);\n\nconst searchEnd = Math.min(\n  workEndMinutes,\n  requestedStartMinutes + SEARCH_WINDOW_MINUTES\n);\n\nconst after = [];\nconst before = [];\n\nfor (\n  let slotStart = requestedStartMinutes + STEP_MINUTES;\n  slotStart <= searchEnd;\n  slotStart += STEP_MINUTES\n) {\n  const slotEnd = slotStart + totalMinutes;\n\n  if (slotEnd > workEndMinutes) continue;\n\n  if (isFree(slotStart, slotEnd)) {\n    after.push(slotStart);\n  }\n\n  if (after.length >= 2) break;\n}\n\nfor (\n  let slotStart = requestedStartMinutes - STEP_MINUTES;\n  slotStart >= searchStart;\n  slotStart -= STEP_MINUTES\n) {\n  const slotEnd = slotStart + totalMinutes;\n\n  if (slotStart < workStartMinutes) continue;\n\n  if (isFree(slotStart, slotEnd)) {\n    before.push(slotStart);\n  }\n\n  if (before.length >= 1) break;\n}\n\nconst nearby = [...before.reverse(), ...after]\n  .slice(0, 3)\n  .map(slot => minutesToTime(slot));\n\nconst requestedTime = String(booking.time).slice(0, 5);\n\nlet message;\n\nif (nearby.length > 0) {\n  message =\n`Sorry — ${booking.pretty_date} at ${requestedTime} is already booked.\n\nClosest available times:\n\n• ${nearby.join('\\n• ')}\n\nOr send another preferred time 💅`;\n} else {\n  message =\n`Sorry — ${booking.pretty_date} at ${requestedTime} is already booked.\n\nI couldn't find free nearby times on this day.\n\nPlease send another preferred time 💅`;\n}\n\nreturn [\n  {\n    json: {\n      ...booking,\n      nearby_free_times: nearby,\n      message\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        1264
+      ],
+      "id": "9f80abc7-39d3-4cb5-876a-baad6813c650",
+      "name": "Find Nearby Free Times"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f2bc9e85-aa6d-45b7-9615-c2542b9757f4",
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "BOOKING REQUEST READY",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1360,
+        1056
+      ],
+      "id": "a5aea360-aecc-4cb5-8d4b-b70eb69a7f9e",
+      "name": "Check Booking Ready"
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\nconst TZ = 'Asia/Dubai';\nconst TZ_OFFSET = '+04:00';\nconst WORK_START_HOUR = 10;\nconst WORK_END_HOUR = 21;\nconst BUFFER_MINUTES = 15;\nfunction pad(n) { return String(n).padStart(2, '0'); }\nfunction dubaiNowParts() {\n  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' })\n    .formatToParts(new Date()).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});\n  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };\n}\nfunction daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); }\nfunction addDaysISO(dateISO, days) {\n  let [year, month, day] = dateISO.split('-').map(Number);\n  day += days;\n  while (day > daysInMonth(year, month)) { day -= daysInMonth(year, month); month += 1; if (month > 12) { month = 1; year += 1; } }\n  while (day < 1) { month -= 1; if (month < 1) { month = 12; year -= 1; } day += daysInMonth(year, month); }\n  return `${year}-${pad(month)}-${pad(day)}`;\n}\nfunction todayISO() { const p = dubaiNowParts(); return `${p.year}-${pad(p.month)}-${pad(p.day)}`; }\nconst MONTHS = {\n  january:'01',jan:'01',february:'02',feb:'02',march:'03',mar:'03',april:'04',apr:'04',may:'05',june:'06',jun:'06',july:'07',jul:'07',august:'08',aug:'08',september:'09',sept:'09',sep:'09',october:'10',oct:'10',november:'11',nov:'11',december:'12',dec:'12',\n  'января':'01','январь':'01','янв':'01','февраля':'02','февраль':'02','фев':'02','марта':'03','март':'03','мар':'03','апреля':'04','апрель':'04','апр':'04','мая':'05','май':'05','июня':'06','июнь':'06','июн':'06','июля':'07','июль':'07','июл':'07','августа':'08','август':'08','авг':'08','сентября':'09','сентябрь':'09','сен':'09','сент':'09','октября':'10','октябрь':'10','окт':'10','ноября':'11','ноябрь':'11','ноя':'11','декабря':'12','декабрь':'12','дек':'12'\n};\nfunction rollForwardIfPast(month, day) { const current = dubaiNowParts(); let year = current.year; let candidate = `${year}-${month}-${pad(day)}`; if (candidate < todayISO()) candidate = `${year + 1}-${month}-${pad(day)}`; return candidate; }\nfunction parseDateToISO(dateText) {\n  const value = String(dateText || '').trim();\n  const lower = value.toLowerCase().replace(/[,]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  if (!lower) throw new Error('Missing date');\n  if (['today', 'сегодня'].includes(lower)) return todayISO();\n  if (['tomorrow', 'завтра'].includes(lower)) return addDaysISO(todayISO(), 1);\n  let m = lower.match(/^(\\d{4})[-.\\/](\\d{1,2})[-.\\/](\\d{1,2})$/); if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;\n  m = lower.match(/^(\\d{1,2})[-.\\/](\\d{1,2})[-.\\/](\\d{4})$/); if (m) return `${m[3]}-${pad(m[2])}-${pad(m[1])}`;\n  m = lower.match(/^(\\d{1,2})[-.\\/](\\d{1,2})$/); if (m) return rollForwardIfPast(pad(m[2]), m[1]);\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?(\\d{1,2})\\s+([a-zа-яё]+)\\s+(\\d{4})$/i); if (m && MONTHS[m[2]]) return `${m[3]}-${MONTHS[m[2]]}-${pad(m[1])}`;\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?([a-zа-яё]+)\\s+(\\d{1,2})\\s+(\\d{4})$/i); if (m && MONTHS[m[1]]) return `${m[3]}-${MONTHS[m[1]]}-${pad(m[2])}`;\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?(\\d{1,2})\\s+([a-zа-яё]+)$/i); if (m && MONTHS[m[2]]) return rollForwardIfPast(MONTHS[m[2]], m[1]);\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?([a-zа-яё]+)\\s+(\\d{1,2})$/i); if (m && MONTHS[m[1]]) return rollForwardIfPast(MONTHS[m[1]], m[2]);\n  throw new Error(`Cannot parse date: ${dateText}`);\n}\nfunction normalizeTimeHour(h) { return h >= 1 && h <= 9 ? h + 12 : h; }\nfunction parseTimeTo24(timeText) {\n  let raw = String(timeText || '').trim().toLowerCase().replace(/\\s+/g, ' ');\n  raw = raw.replace(/^(?:в|at)\\s+/i, '').replace(/час(?:а|ов)?$/i, '').trim();\n  if (!raw) throw new Error('Missing time');\n  let m = raw.match(/^(\\d{1,2})[:.](\\d{2})\\s*(am|pm)?$/);\n  if (m) { let h = Number(m[1]); const min = Number(m[2]); if (h > 23 || min > 59) throw new Error(`Bad time: ${timeText}`); if (m[3]) { if (h < 1 || h > 12) throw new Error(`Bad time: ${timeText}`); if (m[3] === 'pm' && h < 12) h += 12; if (m[3] === 'am' && h === 12) h = 0; } return `${pad(h)}:${pad(min)}:00`; }\n  m = raw.match(/^(\\d{1,2})\\s*(am|pm)$/);\n  if (m) { let h = Number(m[1]); if (h < 1 || h > 12) throw new Error(`Bad time: ${timeText}`); if (m[2] === 'pm' && h < 12) h += 12; if (m[2] === 'am' && h === 12) h = 0; return `${pad(h)}:00:00`; }\n  m = raw.match(/^(\\d{1,2})$/);\n  if (m) { let h = normalizeTimeHour(Number(m[1])); if (h > 23) throw new Error(`Bad time: ${timeText}`); return `${pad(h)}:00:00`; }\n  throw new Error(`Bad time: ${timeText}`);\n}\nfunction prettyDate(dateISO) { const [y, mo, d] = dateISO.split('-'); const names = {'01':'January','02':'February','03':'March','04':'April','05':'May','06':'June','07':'July','08':'August','09':'September','10':'October','11':'November','12':'December'}; return `${Number(d)} ${names[mo]} ${y}`; }\nfunction time24ToMinutes(time24) { const [h, m] = String(time24).split(':').map(Number); return h * 60 + m; }\nfunction minutesToTime24(totalMinutes) { return `${pad(Math.floor(totalMinutes / 60))}:${pad(totalMinutes % 60)}:00`; }\nfunction addMinutesToTime(time24, mins) { return minutesToTime24(time24ToMinutes(time24) + mins); }\nfunction localDateTime(dateISO, time24) { return `${dateISO}T${time24}${TZ_OFFSET}`; }\nfunction getTelegramMessage() { const t = $('Telegram Trigger').first().json || {}; return t.message || t.edited_message || {}; }\nfunction getTelegramText() { return String(getTelegramMessage().text || ''); }\nfunction getTelegramChatId() { const m = getTelegramMessage(); return String(m.chat?.id || m.from?.id || ''); }\nfunction getField(text, label) { const re = new RegExp(label + ':\\\\s*(.+)', 'i'); const m = String(text || '').match(re); return m ? m[1].trim() : ''; }\nfunction extractDates(text) {\n  const s = String(text || ''); const out = [];\n  if (/\\b(today|сегодня)\\b/i.test(s)) out.push(s.match(/\\b(today|сегодня)\\b/i)[1]);\n  if (/\\b(tomorrow|завтра)\\b/i.test(s)) out.push(s.match(/\\b(tomorrow|завтра)\\b/i)[1]);\n  const monthNames = Object.keys(MONTHS).sort((a,b)=>b.length-a.length).join('|');\n  for (const re of [new RegExp(`\\\\b(\\\\d{1,2}\\\\s+(?:${monthNames})(?:\\\\s+\\\\d{4})?)\\\\b`, 'gi'), new RegExp(`\\\\b((?:${monthNames})\\\\s+\\\\d{1,2}(?:,?\\\\s*\\\\d{4})?)\\\\b`, 'gi'), /\\b(\\d{4}[-.\\/]\\d{1,2}[-.\\/]\\d{1,2})\\b/g, /\\b(\\d{1,2}[-.\\/]\\d{1,2}(?:[-.\\/]\\d{4})?)\\b/g]) for (const m of s.matchAll(re)) out.push(m[1]);\n  return [...new Set(out.map(x => x.trim()))];\n}\nfunction extractTimes(text) {\n  const s = String(text || '');\n  const out = [];\n  const monthNames = Object.keys(MONTHS).sort((a,b)=>b.length-a.length).join('|');\n  const monthAfter = new RegExp('^\\\\s+(?:' + monthNames + ')\\\\b', 'i');\n  const re = /(?:\\b(?:at|в)\\s*)?(\\d{1,2}(?::\\d{2}|\\.\\d{2})?\\s*(?:am|pm)?)(?=\\b|\\s|$)/gi;\n  for (const m of s.matchAll(re)) {\n    const v = m[1].trim();\n    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 24);\n    if (/^\\d{4}$/.test(v)) continue;\n    if (/^\\d{1,2}$/.test(v) && monthAfter.test(after)) continue;\n    out.push(v);\n  }\n  return out;\n}\nfunction extractName(text) { const s = String(text || ''); const patterns = [/\\b(?:my\\s+name\\s+is|name\\s+is|for)\\s+([A-ZА-ЯЁ][\\p{L}'-]+)/iu, /\\b(?:меня\\s+зовут|имя|на\\s+имя|для)\\s+([A-ZА-ЯЁ][\\p{L}'-]+)/iu]; for (const p of patterns) { const m = s.match(p); if (m) return m[1].trim(); } return ''; }\nfunction getServiceDurationMinutes(service) { const map = { manicure:60, 'gel manicure':90, pedicure:60, 'gel pedicure':90, haircut:60, massage:60, facial:60, 'маникюр':60, 'гель маникюр':90, 'педикюр':60, 'гель педикюр':90, 'стрижка':60, 'массаж':60, 'уход':60 }; return map[String(service || '').toLowerCase().trim()] || 60; }\nconst text = $('AI Agent').first().json.output || '';\nconst name = getField(text, 'Name') || extractName(getTelegramText());\nconst service = getField(text, 'Service');\nconst dateText = getField(text, 'Date') || extractDates(getTelegramText())[0] || '';\nconst timeText = getField(text, 'Time') || extractTimes(getTelegramText())[0] || '';\nconst bookingDateISO = parseDateToISO(dateText);\nconst bookingTime24 = parseTimeTo24(timeText);\nconst duration_minutes = getServiceDurationMinutes(service);\nconst total_minutes = duration_minutes + BUFFER_MINUTES;\nconst startMinutes = time24ToMinutes(bookingTime24);\nconst endMinutes = startMinutes + total_minutes;\nlet booking_status = text.includes('BOOKING REQUEST READY') ? 'READY' : 'NOT_READY';\nif (booking_status === 'READY' && (startMinutes < WORK_START_HOUR * 60 || endMinutes > WORK_END_HOUR * 60)) booking_status = 'OUT_OF_HOURS';\nconst serviceEnd = addMinutesToTime(bookingTime24, duration_minutes);\nconst calendarEnd = addMinutesToTime(bookingTime24, total_minutes);\nreturn [{ json: {\n  booking_status, name, service, date: bookingDateISO, pretty_date: prettyDate(bookingDateISO), time: bookingTime24,\n  duration_minutes, buffer_minutes: BUFFER_MINUTES, total_minutes,\n  start_datetime: localDateTime(bookingDateISO, bookingTime24), end_datetime: localDateTime(bookingDateISO, calendarEnd), service_end_datetime: localDateTime(bookingDateISO, serviceEnd),\n  search_after_datetime: localDateTime(bookingDateISO, minutesToTime24(Math.max(0, startMinutes - 180))), search_before_datetime: localDateTime(bookingDateISO, minutesToTime24(Math.min(24 * 60 - 1, endMinutes + 180))),\n  timezone: TZ, timezone_offset: TZ_OFFSET, work_start: `${pad(WORK_START_HOUR)}:00`, work_end: `${pad(WORK_END_HOUR)}:00`, raw_ai_output: text, raw_user_text: getTelegramText()\n}}];\n} catch (error) { return [{ json: { booking_status: 'PARSE_ERROR', error: error.message, raw_ai_output: $('AI Agent').first().json.output || '', raw_user_text: ($('Telegram Trigger').first().json.message?.text || '') } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1152,
+        1040
+      ],
+      "id": "f5dd172b-6721-4e27-a45e-d7101f419114",
+      "name": "Parse Booking Details"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a5abb41a-b2ac-457b-a151-3b8ce5a455e7",
+              "leftValue": "={{ $json.booking_status }}",
+              "rightValue": "OUT_OF_HOURS",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -960,
+        1040
+      ],
+      "id": "1c2241a3-2344-4c4d-8315-0d8f306e3a2f",
+      "name": "Check Working Hours"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fd4a9549-4c71-4453-8451-ab9a08c1b24d",
+              "leftValue": "={{ $json.booking_status }}",
+              "rightValue": "PARSE_ERROR",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -752,
+        1056
+      ],
+      "id": "63a25107-5524-4f4f-ac68-f57585708eea",
+      "name": "Check Parse Error"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "zhurachkins@gmail.com",
+          "mode": "list",
+          "cachedResultName": "zhurachkins@gmail.com"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $('Parse Booking Details').first().json.search_after_datetime }}",
+        "timeMax": "={{ $('Parse Booking Details').first().json.search_before_datetime }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -496,
+        1072
+      ],
+      "id": "80a25c41-44d5-4d21-aa0e-e721fbbe5295",
+      "name": "Get Calendar Events",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "kLAsucY4Q4gfePTa",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4451eb21-dea1-4f31-9269-78dd3cfff52b",
+              "leftValue": "={{ $json.hasConflict }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -48,
+        1072
+      ],
+      "id": "ab48a5e4-d096-4894-b0d3-9ebd4245f8c1",
+      "name": "Check Slot Availability"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "zhurachkins@gmail.com",
+          "mode": "list",
+          "cachedResultName": "zhurachkins@gmail.com"
+        },
+        "start": "={{ $('Parse Booking Details').first().json.start_datetime }}",
+        "end": "={{ $('Parse Booking Details').first().json.end_datetime }}",
+        "additionalFields": {
+          "description": "=Client: {{ $('Parse Booking Details').first().json.name }}\nService: {{ $('Parse Booking Details').first().json.service }}\nTelegram: {{ ($('Telegram Trigger').first().json.message?.from?.first_name || $('Telegram Trigger').first().json.message?.from?.username || 'Unknown') }}\nTelegram ID: {{ ($('Telegram Trigger').first().json.message?.chat?.id || $('Telegram Trigger').first().json.message?.from?.id || '') }}\nTimezone: Asia/Dubai\nDuration minutes: {{ $('Parse Booking Details').first().json.duration_minutes }}\nBuffer minutes: {{ $('Parse Booking Details').first().json.buffer_minutes }}",
+          "summary": "={{ $('Parse Booking Details').first().json.service + ' - ' + $('Parse Booking Details').first().json.name }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        192,
+        1056
+      ],
+      "id": "8fe45950-53e9-461c-bb79-a9227e819dd7",
+      "name": "Create Calendar Booking",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "kLAsucY4Q4gfePTa",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3d647ee2-dcfe-4c2d-88bf-6893aba0b665",
+              "leftValue": "={{ ['CANCEL DETAILS','CANCEL REQUEST'].some(p => (($json.output || '').toUpperCase()).includes(p)) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1936,
+        928
+      ],
+      "id": "8508adea-021d-4ad7-a77d-ba00e68433f8",
+      "name": "Check Cancel Request"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9e1009eb-8944-4f9c-9ac2-51d9e6017a5b",
+              "leftValue": "={{ (($json.output || '').toUpperCase()).includes('CANCEL DETAILS') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1712,
+        608
+      ],
+      "id": "067021df-f0f3-4541-b90f-f26a51046527",
+      "name": "Check Cancel Details"
+    },
+    {
+      "parameters": {
+        "chatId": "749794440",
+        "text": "=❌ CANCELLATION COMPLETED\n\nClient Telegram name: {{ ($('Telegram Trigger').first().json.message?.from?.first_name || $('Telegram Trigger').first().json.message?.from?.username || 'Unknown') }}\nTelegram ID: {{ ($('Telegram Trigger').first().json.message?.chat?.id || $('Telegram Trigger').first().json.message?.from?.id || '') }}\n\n{{ $('AI Agent').first().json.output }}\n\nCalendar event cancelled: YES",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1488,
+        544
+      ],
+      "id": "a213760f-ea29-46de-8a73-d826e748c730",
+      "name": "Send Admin Cancel Request",
+      "webhookId": "4fe16657-6b05-48ad-bc48-e47ce441c3f9",
+      "credentials": {
+        "telegramApi": {
+          "id": "2aCMFGrEjdyoRhsd",
+          "name": "Telegram account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "22187697-bc46-4126-9073-d8bf61d4863b",
+              "leftValue": "={{ ['RESCHEDULE DETAILS','RESCHEDULE REQUEST'].some(p => (($('AI Agent').first().json.output || '').toUpperCase()).includes(p)) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2240,
+        912
+      ],
+      "id": "a4602b84-3083-4484-92a9-e25bc37fe57e",
+      "name": "Check Reschedule Request"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0f2dbe1a-b38e-475d-a0fe-ba7013f2b085",
+              "leftValue": "={{ (($json.output || '').toUpperCase()).includes('RESCHEDULE DETAILS') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1952,
+        384
+      ],
+      "id": "2a1d8b2d-fa68-4688-9725-13bb8faafc9c",
+      "name": "Check Reschedule Details."
+    },
+    {
+      "parameters": {
+        "chatId": "749794440",
+        "text": "=🔄 RESCHEDULE COMPLETED\n\nClient Telegram name: {{ ($('Telegram Trigger').first().json.message?.from?.first_name || $('Telegram Trigger').first().json.message?.from?.username || 'Unknown') }}\nTelegram ID: {{ ($('Telegram Trigger').first().json.message?.chat?.id || $('Telegram Trigger').first().json.message?.from?.id || '') }}\n\n{{ $('AI Agent').first().json.output }}\n\nCalendar event rescheduled: YES",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1504,
+        0
+      ],
+      "id": "1f2e9fb9-fa73-48a6-bff9-24a3f463b774",
+      "name": "Send Admin Reschedule Request",
+      "webhookId": "4fe16657-6b05-48ad-bc48-e47ce441c3f9",
+      "credentials": {
+        "telegramApi": {
+          "id": "2aCMFGrEjdyoRhsd",
+          "name": "Telegram account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const booking = $('Parse Booking Details').first().json;\nconst events = $('Get Calendar Events').all().map(item => item.json);\n\nconst bufferMinutes = 15;\nconst durationMinutes = booking.duration_minutes || 60;\n\n// буфер уже включён в создаваемое событие\nconst totalMinutes = durationMinutes + bufferMinutes;\n\nfunction timeToMinutes(time) {\n  const [h, m] = String(time).split(':').map(Number);\n  return h * 60 + m;\n}\n\nfunction eventTimeToMinutes(value) {\n  if (!value) return null;\n\n  const match = String(value).match(/T(\\d{2}):(\\d{2})/);\n\n  if (!match) return null;\n\n  return Number(match[1]) * 60 + Number(match[2]);\n}\n\nfunction overlaps(startA, endA, startB, endB) {\n  return startA < endB && endA > startB;\n}\n\nconst bookingStart = timeToMinutes(booking.time);\nconst bookingEnd = bookingStart + totalMinutes;\n\nlet hasConflict = false;\n\nfor (const event of events) {\n  if (!event.start || !event.end) continue;\n\n  const eventStartRaw = event.start.dateTime || event.start.date;\n  const eventEndRaw = event.end.dateTime || event.end.date;\n\n  const eventStart = eventTimeToMinutes(eventStartRaw);\n  const eventEnd = eventTimeToMinutes(eventEndRaw);\n\n  if (eventStart === null || eventEnd === null) continue;\n\n  // событие уже включает буфер\n  const blockedStart = eventStart;\n  const blockedEnd = eventEnd;\n\n  if (\n    overlaps(\n      bookingStart,\n      bookingEnd,\n      blockedStart,\n      blockedEnd\n    )\n  ) {\n    hasConflict = true;\n    break;\n  }\n}\n\nreturn [\n  {\n    json: {\n      ...booking,\n      hasConflict\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        1072
+      ],
+      "id": "bedeeda7-f2a8-49c6-860c-6b35d07d8874",
+      "name": "Check Slot Conflict"
+    },
+    {
+      "parameters": {
+        "jsCode": "const previous = $input.first().json;\nconst telegram = $('Telegram Trigger').first().json;\n\nconst chatId = (telegram.message?.chat?.id || telegram.message?.from?.id || '');\n\nconst startDate = previous.start?.dateTime\n  ? new Date(previous.start.dateTime)\n  : null;\n\nfunction pad(n) {\n  return String(n).padStart(2, '0');\n}\n\nlet formattedDate = '';\nlet formattedTime = '';\n\nif (startDate) {\n  formattedDate = startDate.toLocaleDateString('en-GB', {\n    day: '2-digit',\n    month: 'long',\n    year: 'numeric',\n    timeZone: 'Asia/Dubai',\n  });\n\nformattedTime = startDate.toLocaleTimeString(\n'en-GB',\n{\ntimeZone: 'Asia/Dubai',\nhour: '2-digit',\nminute: '2-digit',\nhour12:false\n}\n)\n}\n\nconst serviceName = previous.summary\n  ? previous.summary.split(' - ')[0]\n  : 'your service';\n\nconst clientName = previous.summary && previous.summary.includes(' - ')\n  ? previous.summary.split(' - ')[1]\n  : '';\n\nconst messageText =\n`✅ Your booking is confirmed!\n\nName: ${clientName}\nService: ${serviceName}\nDate: ${formattedDate}\nTime: ${formattedTime}\n\nWe look forward to seeing you`;\n\nreturn [\n  {\n    json: {\n      channel: 'telegram',\n      recipient_id: chatId,\n      message_text: messageText,\n      original_data: previous,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        944
+      ],
+      "id": "32ffe18d-ec9d-4df5-991b-25c63c023bf0",
+      "name": "Prepare Response"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.channel }}",
+                    "rightValue": "telegram",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "991c286a-f78d-43e5-a8a7-36963b1cd2c7"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1152,
+        768
+      ],
+      "id": "ed2ded5b-c2dd-4ae4-9d04-d2079fdc50d0",
+      "name": "Universal Send"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\n\nconst chatId = (telegram.message?.chat?.id || telegram.message?.from?.id || '');\n\nconst text =\n$input.first().json.message ||\n\"Sorry — selected time is busy.\";\n\nreturn [{\njson:{\nchannel:'telegram',\nrecipient_id:chatId,\nmessage_text:text\n}\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1264
+      ],
+      "id": "6827f6de-3124-4ea3-83fa-0adc47468279",
+      "name": "Prepare Response Busy"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\n\nconst chatId = (telegram.message?.chat?.id || telegram.message?.from?.id || '');\n\nconst requestedTime =\n$('Parse Booking Details').first().json.time || '';\n\nconst messageText =\n`Sorry — ${requestedTime.slice(0,5)} is outside our working hours.\n\nWorking hours:\n10:00 AM – 9:00 PM\n\nPlease choose another time 💅`;\n\nreturn [{\njson:{\nchannel:'telegram',\nrecipient_id:chatId,\nmessage_text:messageText\n}\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        832
+      ],
+      "id": "5e59a06f-771b-4562-a95f-d497977e1cf7",
+      "name": "Prepare Response Outside Hours"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\nconst chatId = (telegram.message?.chat?.id || telegram.message?.from?.id || '');\n\nconst aiOutput = $('AI Agent').first().json.output || '';\n\nreturn [{\n  json: {\n    channel: 'telegram',\n    recipient_id: chatId,\n    message_text: aiOutput\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1152,
+        1232
+      ],
+      "id": "d11bf8e8-d6cd-41a0-b667-ce7614293f06",
+      "name": "Prepare Response Missing Info"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\nconst chatId = (telegram.message?.chat?.id || telegram.message?.from?.id || '');\n\nconst messageText =\n\"Sorry, I couldn't understand the booking details. Please send service, date, time and name again.\";\n\nreturn [{\n  json: {\n    channel: 'telegram',\n    recipient_id: chatId,\n    message_text: messageText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -496,
+        912
+      ],
+      "id": "7e5660f5-ba45-4d9a-9815-9edff020d3fe",
+      "name": "Prepare Response Parse Error"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\n\nconst chatId = (telegram.message?.chat?.id || telegram.message?.from?.id || '');\n\nconst messageText =\n\"Please provide your name, appointment date and time for cancellation.\";\n\nreturn [{\n  json: {\n    channel: 'telegram',\n    recipient_id: chatId,\n    message_text: messageText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        768
+      ],
+      "id": "cd5823fa-7ad1-4950-952f-2ad8e82f7e91",
+      "name": "Prepare Response Cancel Ask Details"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\n\nconst chatId = (telegram.message?.chat?.id || telegram.message?.from?.id || '');\n\nconst messageText =\n\"Please provide your name, current appointment date/time and new preferred date/time.\";\n\nreturn [{\n  json: {\n    channel: 'telegram',\n    recipient_id: chatId,\n    message_text: messageText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        384
+      ],
+      "id": "984d2b4f-1a45-4087-97f8-903ca4e7d39e",
+      "name": "Prepare Response Reschedule Ask Details"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.recipient_id }}",
+        "text": "={{ $json.message_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1488,
+        768
+      ],
+      "id": "314a3ef1-b119-403f-897c-02b6e0dd702e",
+      "name": "Send a Client message",
+      "webhookId": "abc4fd5f-ffea-490a-804f-3ea71564e07d",
+      "credentials": {
+        "telegramApi": {
+          "id": "KbOhUaYPFPbuDhJo",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\nconst TZ = 'Asia/Dubai';\nconst TZ_OFFSET = '+04:00';\nconst WORK_START_HOUR = 10;\nconst WORK_END_HOUR = 21;\nconst BUFFER_MINUTES = 15;\nfunction pad(n) { return String(n).padStart(2, '0'); }\nfunction dubaiNowParts() {\n  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' })\n    .formatToParts(new Date()).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});\n  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };\n}\nfunction daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); }\nfunction addDaysISO(dateISO, days) {\n  let [year, month, day] = dateISO.split('-').map(Number);\n  day += days;\n  while (day > daysInMonth(year, month)) { day -= daysInMonth(year, month); month += 1; if (month > 12) { month = 1; year += 1; } }\n  while (day < 1) { month -= 1; if (month < 1) { month = 12; year -= 1; } day += daysInMonth(year, month); }\n  return `${year}-${pad(month)}-${pad(day)}`;\n}\nfunction todayISO() { const p = dubaiNowParts(); return `${p.year}-${pad(p.month)}-${pad(p.day)}`; }\nconst MONTHS = {\n  january:'01',jan:'01',february:'02',feb:'02',march:'03',mar:'03',april:'04',apr:'04',may:'05',june:'06',jun:'06',july:'07',jul:'07',august:'08',aug:'08',september:'09',sept:'09',sep:'09',october:'10',oct:'10',november:'11',nov:'11',december:'12',dec:'12',\n  'января':'01','январь':'01','янв':'01','февраля':'02','февраль':'02','фев':'02','марта':'03','март':'03','мар':'03','апреля':'04','апрель':'04','апр':'04','мая':'05','май':'05','июня':'06','июнь':'06','июн':'06','июля':'07','июль':'07','июл':'07','августа':'08','август':'08','авг':'08','сентября':'09','сентябрь':'09','сен':'09','сент':'09','октября':'10','октябрь':'10','окт':'10','ноября':'11','ноябрь':'11','ноя':'11','декабря':'12','декабрь':'12','дек':'12'\n};\nfunction rollForwardIfPast(month, day) { const current = dubaiNowParts(); let year = current.year; let candidate = `${year}-${month}-${pad(day)}`; if (candidate < todayISO()) candidate = `${year + 1}-${month}-${pad(day)}`; return candidate; }\nfunction parseDateToISO(dateText) {\n  const value = String(dateText || '').trim();\n  const lower = value.toLowerCase().replace(/[,]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  if (!lower) throw new Error('Missing date');\n  if (['today', 'сегодня'].includes(lower)) return todayISO();\n  if (['tomorrow', 'завтра'].includes(lower)) return addDaysISO(todayISO(), 1);\n  let m = lower.match(/^(\\d{4})[-.\\/](\\d{1,2})[-.\\/](\\d{1,2})$/); if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;\n  m = lower.match(/^(\\d{1,2})[-.\\/](\\d{1,2})[-.\\/](\\d{4})$/); if (m) return `${m[3]}-${pad(m[2])}-${pad(m[1])}`;\n  m = lower.match(/^(\\d{1,2})[-.\\/](\\d{1,2})$/); if (m) return rollForwardIfPast(pad(m[2]), m[1]);\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?(\\d{1,2})\\s+([a-zа-яё]+)\\s+(\\d{4})$/i); if (m && MONTHS[m[2]]) return `${m[3]}-${MONTHS[m[2]]}-${pad(m[1])}`;\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?([a-zа-яё]+)\\s+(\\d{1,2})\\s+(\\d{4})$/i); if (m && MONTHS[m[1]]) return `${m[3]}-${MONTHS[m[1]]}-${pad(m[2])}`;\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?(\\d{1,2})\\s+([a-zа-яё]+)$/i); if (m && MONTHS[m[2]]) return rollForwardIfPast(MONTHS[m[2]], m[1]);\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?([a-zа-яё]+)\\s+(\\d{1,2})$/i); if (m && MONTHS[m[1]]) return rollForwardIfPast(MONTHS[m[1]], m[2]);\n  throw new Error(`Cannot parse date: ${dateText}`);\n}\nfunction normalizeTimeHour(h) { return h >= 1 && h <= 9 ? h + 12 : h; }\nfunction parseTimeTo24(timeText) {\n  let raw = String(timeText || '').trim().toLowerCase().replace(/\\s+/g, ' ');\n  raw = raw.replace(/^(?:в|at)\\s+/i, '').replace(/час(?:а|ов)?$/i, '').trim();\n  if (!raw) throw new Error('Missing time');\n  let m = raw.match(/^(\\d{1,2})[:.](\\d{2})\\s*(am|pm)?$/);\n  if (m) { let h = Number(m[1]); const min = Number(m[2]); if (h > 23 || min > 59) throw new Error(`Bad time: ${timeText}`); if (m[3]) { if (h < 1 || h > 12) throw new Error(`Bad time: ${timeText}`); if (m[3] === 'pm' && h < 12) h += 12; if (m[3] === 'am' && h === 12) h = 0; } return `${pad(h)}:${pad(min)}:00`; }\n  m = raw.match(/^(\\d{1,2})\\s*(am|pm)$/);\n  if (m) { let h = Number(m[1]); if (h < 1 || h > 12) throw new Error(`Bad time: ${timeText}`); if (m[2] === 'pm' && h < 12) h += 12; if (m[2] === 'am' && h === 12) h = 0; return `${pad(h)}:00:00`; }\n  m = raw.match(/^(\\d{1,2})$/);\n  if (m) { let h = normalizeTimeHour(Number(m[1])); if (h > 23) throw new Error(`Bad time: ${timeText}`); return `${pad(h)}:00:00`; }\n  throw new Error(`Bad time: ${timeText}`);\n}\nfunction prettyDate(dateISO) { const [y, mo, d] = dateISO.split('-'); const names = {'01':'January','02':'February','03':'March','04':'April','05':'May','06':'June','07':'July','08':'August','09':'September','10':'October','11':'November','12':'December'}; return `${Number(d)} ${names[mo]} ${y}`; }\nfunction time24ToMinutes(time24) { const [h, m] = String(time24).split(':').map(Number); return h * 60 + m; }\nfunction minutesToTime24(totalMinutes) { return `${pad(Math.floor(totalMinutes / 60))}:${pad(totalMinutes % 60)}:00`; }\nfunction addMinutesToTime(time24, mins) { return minutesToTime24(time24ToMinutes(time24) + mins); }\nfunction localDateTime(dateISO, time24) { return `${dateISO}T${time24}${TZ_OFFSET}`; }\nfunction getTelegramMessage() { const t = $('Telegram Trigger').first().json || {}; return t.message || t.edited_message || {}; }\nfunction getTelegramText() { return String(getTelegramMessage().text || ''); }\nfunction getTelegramChatId() { const m = getTelegramMessage(); return String(m.chat?.id || m.from?.id || ''); }\nfunction getField(text, label) { const re = new RegExp(label + ':\\\\s*(.+)', 'i'); const m = String(text || '').match(re); return m ? m[1].trim() : ''; }\nfunction extractDates(text) {\n  const s = String(text || ''); const out = [];\n  if (/\\b(today|сегодня)\\b/i.test(s)) out.push(s.match(/\\b(today|сегодня)\\b/i)[1]);\n  if (/\\b(tomorrow|завтра)\\b/i.test(s)) out.push(s.match(/\\b(tomorrow|завтра)\\b/i)[1]);\n  const monthNames = Object.keys(MONTHS).sort((a,b)=>b.length-a.length).join('|');\n  for (const re of [new RegExp(`\\\\b(\\\\d{1,2}\\\\s+(?:${monthNames})(?:\\\\s+\\\\d{4})?)\\\\b`, 'gi'), new RegExp(`\\\\b((?:${monthNames})\\\\s+\\\\d{1,2}(?:,?\\\\s*\\\\d{4})?)\\\\b`, 'gi'), /\\b(\\d{4}[-.\\/]\\d{1,2}[-.\\/]\\d{1,2})\\b/g, /\\b(\\d{1,2}[-.\\/]\\d{1,2}(?:[-.\\/]\\d{4})?)\\b/g]) for (const m of s.matchAll(re)) out.push(m[1]);\n  return [...new Set(out.map(x => x.trim()))];\n}\nfunction extractTimes(text) {\n  const s = String(text || '');\n  const out = [];\n  const monthNames = Object.keys(MONTHS).sort((a,b)=>b.length-a.length).join('|');\n  const monthAfter = new RegExp('^\\\\s+(?:' + monthNames + ')\\\\b', 'i');\n  const re = /(?:\\b(?:at|в)\\s*)?(\\d{1,2}(?::\\d{2}|\\.\\d{2})?\\s*(?:am|pm)?)(?=\\b|\\s|$)/gi;\n  for (const m of s.matchAll(re)) {\n    const v = m[1].trim();\n    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 24);\n    if (/^\\d{4}$/.test(v)) continue;\n    if (/^\\d{1,2}$/.test(v) && monthAfter.test(after)) continue;\n    out.push(v);\n  }\n  return out;\n}\nfunction extractName(text) { const s = String(text || ''); const patterns = [/\\b(?:my\\s+name\\s+is|name\\s+is|for)\\s+([A-ZА-ЯЁ][\\p{L}'-]+)/iu, /\\b(?:меня\\s+зовут|имя|на\\s+имя|для)\\s+([A-ZА-ЯЁ][\\p{L}'-]+)/iu]; for (const p of patterns) { const m = s.match(p); if (m) return m[1].trim(); } return ''; }\nfunction getServiceDurationMinutes(service) { const map = { manicure:60, 'gel manicure':90, pedicure:60, 'gel pedicure':90, haircut:60, massage:60, facial:60, 'маникюр':60, 'гель маникюр':90, 'педикюр':60, 'гель педикюр':90, 'стрижка':60, 'массаж':60, 'уход':60 }; return map[String(service || '').toLowerCase().trim()] || 60; }\nconst aiText = $('AI Agent').first().json.output || '';\nconst userText = getTelegramText();\nconst name = getField(aiText, 'Name') || extractName(userText);\nconst dateText = getField(aiText, 'Date') || extractDates(userText)[0] || '';\nconst timeText = getField(aiText, 'Time') || extractTimes(userText)[0] || '';\nif (!name || !dateText || !timeText) throw new Error(`Missing cancel fields: name=${name}, date=${dateText}, time=${timeText}`);\nconst date = parseDateToISO(dateText);\nconst time = parseTimeTo24(timeText);\nreturn [{ json: { cancel_status: 'READY', name, date, pretty_date: prettyDate(date), time, telegram_id: getTelegramChatId(), start_datetime: localDateTime(date, time), day_start: localDateTime(date, '00:00:00'), day_end: localDateTime(addDaysISO(date, 1), '00:00:00'), timezone: TZ, timezone_offset: TZ_OFFSET, raw_ai_output: aiText, raw_user_text: userText } }];\n} catch (error) { return [{ json: { cancel_status: 'PARSE_ERROR', error: error.message, raw_ai_output: $('AI Agent').first().json.output || '', raw_user_text: ($('Telegram Trigger').first().json.message?.text || '') } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1440,
+        544
+      ],
+      "id": "1d4fa0e7-dcee-4218-bf88-0dc74e886b30",
+      "name": "Parse Cancel Details"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "zhurachkins@gmail.com",
+          "mode": "list",
+          "cachedResultName": "zhurachkins@gmail.com"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $('Parse Cancel Details').first().json.day_start }}",
+        "timeMax": "={{ $('Parse Cancel Details').first().json.day_end }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -896,
+        560
+      ],
+      "id": "13aec27c-8f2d-42cb-8f48-a7044022cd49",
+      "name": "Get Cancel Day Events",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "kLAsucY4Q4gfePTa",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cancel = $('Parse Cancel Details').first().json;\nconst events = $('Get Cancel Day Events').all().map(item => item.json).filter(e => e && (e.id || e.summary || e.start));\nfunction normalizeText(value) { return String(value || '').toLowerCase().normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^\\p{L}\\p{N}]+/gu, ' ').trim(); }\nfunction fieldFromDescription(description, label) { const re = new RegExp(`${label}\\\\s*:\\\\s*([^\\\\n]+)`, 'i'); const m = String(description || '').match(re); return m ? m[1].trim() : ''; }\nfunction telegramIdFromDescription(description) { return fieldFromDescription(description, 'Telegram ID'); }\nfunction clientFromDescription(description) { return fieldFromDescription(description, 'Client'); }\nfunction eventStartRaw(event) { return event.start?.dateTime || event.start?.date || ''; }\nfunction eventTimeMinutes(value) { const m = String(value || '').match(/T(\\d{2}):(\\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }\nfunction eventDate(value) { return String(value || '').split('T')[0]; }\nfunction isSameDayEvent(event, date) { const raw = eventStartRaw(event); return eventDate(raw) === date || String(raw) === date; }\nfunction minutesFromTime(time) { const [h, m] = String(time || '').split(':').map(Number); return h * 60 + (m || 0); }\nfunction nameMatches(event, name) { const wanted = normalizeText(name); if (!wanted) return false; const summary = normalizeText(event.summary); const description = normalizeText(event.description); const client = normalizeText(clientFromDescription(event.description)); return summary.includes(wanted) || description.includes(wanted) || client.includes(wanted); }\nfunction timeMatches(event, requestedTime, toleranceMinutes = 15) { const actual = eventTimeMinutes(eventStartRaw(event)); if (actual === null) return false; return Math.abs(actual - minutesFromTime(requestedTime)) <= toleranceMinutes; }\nfunction telegramMatches(event, telegramId) { const wanted = String(telegramId || '').trim(); if (!wanted) return false; return telegramIdFromDescription(event.description) === wanted || String(event.description || '').includes(`Telegram ID: ${wanted}`); }\nfunction chooseAppointment(events, details, dateKey, timeKey) {\n  const requestedDate = String(details[dateKey] || '').trim(); const requestedTime = String(details[timeKey] || '').trim(); const candidates = [];\n  for (const event of events) {\n    if (!isSameDayEvent(event, requestedDate)) continue;\n    const scoreParts = { telegram: telegramMatches(event, details.telegram_id), name: nameMatches(event, details.name), time: timeMatches(event, requestedTime, 15), exactTime: timeMatches(event, requestedTime, 0) };\n    let score = 0; if (scoreParts.telegram) score += 6; if (scoreParts.name) score += 3; if (scoreParts.exactTime) score += 3; else if (scoreParts.time) score += 2;\n    if (score >= 5 || (scoreParts.name && scoreParts.time)) candidates.push({ event, score, scoreParts });\n  }\n  candidates.sort((a, b) => b.score - a.score);\n  return candidates[0] || null;\n}\nconst best = chooseAppointment(events, cancel, 'date', 'time');\nconst matched = best?.event || null;\nconst hasStrongButWrongIdentity = !matched && events.some(event => isSameDayEvent(event, cancel.date) && nameMatches(event, cancel.name) && timeMatches(event, cancel.time, 15));\nreturn [{ json: { ...cancel, found_event: Boolean(matched), identity_verified: Boolean(matched && (best.scoreParts.telegram || (best.scoreParts.name && best.scoreParts.time))), identity_mismatch: hasStrongButWrongIdentity, event_id: matched?.id || '', event_summary: matched?.summary || '', matched_event: matched, match_score: best?.score || 0, match_parts: best?.scoreParts || null } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -688,
+        560
+      ],
+      "id": "8ad9414e-a846-405b-924b-8c42ba77133a",
+      "name": "Find Cancel Event"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e4f5f07b-69d6-49dd-a553-d410d76b066b",
+              "leftValue": "={{ $json.found_event }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -464,
+        560
+      ],
+      "id": "2656e9b7-dec7-454b-b163-a9a38899bc07",
+      "name": "Check Cancel Event Found"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "value": "zhurachkins@gmail.com",
+          "mode": "list",
+          "cachedResultName": "zhurachkins@gmail.com"
+        },
+        "eventId": "={{ $('Find Cancel Event').first().json.event_id }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -128,
+        544
+      ],
+      "id": "180eef40-843c-4bfd-b2a3-55f80338f230",
+      "name": "Delete Calendar Booking",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "kLAsucY4Q4gfePTa",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\nconst c = $('Find Cancel Event').first().json;\nconst messageText = `✅ Your appointment has been cancelled.\n\nName: ${c.name}\nDate: ${c.pretty_date}\nTime: ${String(c.time || '').slice(0,5)}`;\nreturn [{json:{channel:'telegram', recipient_id:(telegram.message?.chat?.id || telegram.message?.from?.id || ''), message_text:messageText}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        544
+      ],
+      "id": "48e1ba85-e615-4eae-8395-159855ae53e2",
+      "name": "Prepare Response Cancel Confirmed"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\nconst c = $('Find Cancel Event').first().json;\n\nlet messageText;\nif (c.identity_mismatch) {\n  messageText = `Sorry — I can't cancel this appointment because it belongs to another Telegram account.`;\n} else {\n  messageText = `Sorry — I couldn't find an appointment for ${c.name} on ${c.pretty_date} at ${String(c.time || '').slice(0,5)}.\n\nPlease check the name, date and time.`;\n}\n\nreturn [{json:{channel:'telegram', recipient_id:(telegram.message?.chat?.id || telegram.message?.from?.id || ''), message_text:messageText}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        752
+      ],
+      "id": "f51a7b61-9053-469c-87a4-f6bca663fd58",
+      "name": "Prepare Response Cancel Not Found"
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\nconst TZ = 'Asia/Dubai';\nconst TZ_OFFSET = '+04:00';\nconst WORK_START_HOUR = 10;\nconst WORK_END_HOUR = 21;\nconst BUFFER_MINUTES = 15;\nfunction pad(n) { return String(n).padStart(2, '0'); }\nfunction dubaiNowParts() {\n  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' })\n    .formatToParts(new Date()).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});\n  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };\n}\nfunction daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); }\nfunction addDaysISO(dateISO, days) {\n  let [year, month, day] = dateISO.split('-').map(Number);\n  day += days;\n  while (day > daysInMonth(year, month)) { day -= daysInMonth(year, month); month += 1; if (month > 12) { month = 1; year += 1; } }\n  while (day < 1) { month -= 1; if (month < 1) { month = 12; year -= 1; } day += daysInMonth(year, month); }\n  return `${year}-${pad(month)}-${pad(day)}`;\n}\nfunction todayISO() { const p = dubaiNowParts(); return `${p.year}-${pad(p.month)}-${pad(p.day)}`; }\nconst MONTHS = {\n  january:'01',jan:'01',february:'02',feb:'02',march:'03',mar:'03',april:'04',apr:'04',may:'05',june:'06',jun:'06',july:'07',jul:'07',august:'08',aug:'08',september:'09',sept:'09',sep:'09',october:'10',oct:'10',november:'11',nov:'11',december:'12',dec:'12',\n  'января':'01','январь':'01','янв':'01','февраля':'02','февраль':'02','фев':'02','марта':'03','март':'03','мар':'03','апреля':'04','апрель':'04','апр':'04','мая':'05','май':'05','июня':'06','июнь':'06','июн':'06','июля':'07','июль':'07','июл':'07','августа':'08','август':'08','авг':'08','сентября':'09','сентябрь':'09','сен':'09','сент':'09','октября':'10','октябрь':'10','окт':'10','ноября':'11','ноябрь':'11','ноя':'11','декабря':'12','декабрь':'12','дек':'12'\n};\nfunction rollForwardIfPast(month, day) { const current = dubaiNowParts(); let year = current.year; let candidate = `${year}-${month}-${pad(day)}`; if (candidate < todayISO()) candidate = `${year + 1}-${month}-${pad(day)}`; return candidate; }\nfunction parseDateToISO(dateText) {\n  const value = String(dateText || '').trim();\n  const lower = value.toLowerCase().replace(/[,]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  if (!lower) throw new Error('Missing date');\n  if (['today', 'сегодня'].includes(lower)) return todayISO();\n  if (['tomorrow', 'завтра'].includes(lower)) return addDaysISO(todayISO(), 1);\n  let m = lower.match(/^(\\d{4})[-.\\/](\\d{1,2})[-.\\/](\\d{1,2})$/); if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;\n  m = lower.match(/^(\\d{1,2})[-.\\/](\\d{1,2})[-.\\/](\\d{4})$/); if (m) return `${m[3]}-${pad(m[2])}-${pad(m[1])}`;\n  m = lower.match(/^(\\d{1,2})[-.\\/](\\d{1,2})$/); if (m) return rollForwardIfPast(pad(m[2]), m[1]);\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?(\\d{1,2})\\s+([a-zа-яё]+)\\s+(\\d{4})$/i); if (m && MONTHS[m[2]]) return `${m[3]}-${MONTHS[m[2]]}-${pad(m[1])}`;\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?([a-zа-яё]+)\\s+(\\d{1,2})\\s+(\\d{4})$/i); if (m && MONTHS[m[1]]) return `${m[3]}-${MONTHS[m[1]]}-${pad(m[2])}`;\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?(\\d{1,2})\\s+([a-zа-яё]+)$/i); if (m && MONTHS[m[2]]) return rollForwardIfPast(MONTHS[m[2]], m[1]);\n  m = lower.match(/^(?:[a-zа-яё]+day\\s+|(?:в|во)\\s+)?([a-zа-яё]+)\\s+(\\d{1,2})$/i); if (m && MONTHS[m[1]]) return rollForwardIfPast(MONTHS[m[1]], m[2]);\n  throw new Error(`Cannot parse date: ${dateText}`);\n}\nfunction normalizeTimeHour(h) { return h >= 1 && h <= 9 ? h + 12 : h; }\nfunction parseTimeTo24(timeText) {\n  let raw = String(timeText || '').trim().toLowerCase().replace(/\\s+/g, ' ');\n  raw = raw.replace(/^(?:в|at)\\s+/i, '').replace(/час(?:а|ов)?$/i, '').trim();\n  if (!raw) throw new Error('Missing time');\n  let m = raw.match(/^(\\d{1,2})[:.](\\d{2})\\s*(am|pm)?$/);\n  if (m) { let h = Number(m[1]); const min = Number(m[2]); if (h > 23 || min > 59) throw new Error(`Bad time: ${timeText}`); if (m[3]) { if (h < 1 || h > 12) throw new Error(`Bad time: ${timeText}`); if (m[3] === 'pm' && h < 12) h += 12; if (m[3] === 'am' && h === 12) h = 0; } return `${pad(h)}:${pad(min)}:00`; }\n  m = raw.match(/^(\\d{1,2})\\s*(am|pm)$/);\n  if (m) { let h = Number(m[1]); if (h < 1 || h > 12) throw new Error(`Bad time: ${timeText}`); if (m[2] === 'pm' && h < 12) h += 12; if (m[2] === 'am' && h === 12) h = 0; return `${pad(h)}:00:00`; }\n  m = raw.match(/^(\\d{1,2})$/);\n  if (m) { let h = normalizeTimeHour(Number(m[1])); if (h > 23) throw new Error(`Bad time: ${timeText}`); return `${pad(h)}:00:00`; }\n  throw new Error(`Bad time: ${timeText}`);\n}\nfunction prettyDate(dateISO) { const [y, mo, d] = dateISO.split('-'); const names = {'01':'January','02':'February','03':'March','04':'April','05':'May','06':'June','07':'July','08':'August','09':'September','10':'October','11':'November','12':'December'}; return `${Number(d)} ${names[mo]} ${y}`; }\nfunction time24ToMinutes(time24) { const [h, m] = String(time24).split(':').map(Number); return h * 60 + m; }\nfunction minutesToTime24(totalMinutes) { return `${pad(Math.floor(totalMinutes / 60))}:${pad(totalMinutes % 60)}:00`; }\nfunction addMinutesToTime(time24, mins) { return minutesToTime24(time24ToMinutes(time24) + mins); }\nfunction localDateTime(dateISO, time24) { return `${dateISO}T${time24}${TZ_OFFSET}`; }\nfunction getTelegramMessage() { const t = $('Telegram Trigger').first().json || {}; return t.message || t.edited_message || {}; }\nfunction getTelegramText() { return String(getTelegramMessage().text || ''); }\nfunction getTelegramChatId() { const m = getTelegramMessage(); return String(m.chat?.id || m.from?.id || ''); }\nfunction getField(text, label) { const re = new RegExp(label + ':\\\\s*(.+)', 'i'); const m = String(text || '').match(re); return m ? m[1].trim() : ''; }\nfunction extractDates(text) {\n  const s = String(text || ''); const out = [];\n  if (/\\b(today|сегодня)\\b/i.test(s)) out.push(s.match(/\\b(today|сегодня)\\b/i)[1]);\n  if (/\\b(tomorrow|завтра)\\b/i.test(s)) out.push(s.match(/\\b(tomorrow|завтра)\\b/i)[1]);\n  const monthNames = Object.keys(MONTHS).sort((a,b)=>b.length-a.length).join('|');\n  for (const re of [new RegExp(`\\\\b(\\\\d{1,2}\\\\s+(?:${monthNames})(?:\\\\s+\\\\d{4})?)\\\\b`, 'gi'), new RegExp(`\\\\b((?:${monthNames})\\\\s+\\\\d{1,2}(?:,?\\\\s*\\\\d{4})?)\\\\b`, 'gi'), /\\b(\\d{4}[-.\\/]\\d{1,2}[-.\\/]\\d{1,2})\\b/g, /\\b(\\d{1,2}[-.\\/]\\d{1,2}(?:[-.\\/]\\d{4})?)\\b/g]) for (const m of s.matchAll(re)) out.push(m[1]);\n  return [...new Set(out.map(x => x.trim()))];\n}\nfunction extractTimes(text) {\n  const s = String(text || '');\n  const out = [];\n  const monthNames = Object.keys(MONTHS).sort((a,b)=>b.length-a.length).join('|');\n  const monthAfter = new RegExp('^\\\\s+(?:' + monthNames + ')\\\\b', 'i');\n  const re = /(?:\\b(?:at|в)\\s*)?(\\d{1,2}(?::\\d{2}|\\.\\d{2})?\\s*(?:am|pm)?)(?=\\b|\\s|$)/gi;\n  for (const m of s.matchAll(re)) {\n    const v = m[1].trim();\n    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 24);\n    if (/^\\d{4}$/.test(v)) continue;\n    if (/^\\d{1,2}$/.test(v) && monthAfter.test(after)) continue;\n    out.push(v);\n  }\n  return out;\n}\nfunction extractName(text) { const s = String(text || ''); const patterns = [/\\b(?:my\\s+name\\s+is|name\\s+is|for)\\s+([A-ZА-ЯЁ][\\p{L}'-]+)/iu, /\\b(?:меня\\s+зовут|имя|на\\s+имя|для)\\s+([A-ZА-ЯЁ][\\p{L}'-]+)/iu]; for (const p of patterns) { const m = s.match(p); if (m) return m[1].trim(); } return ''; }\nfunction getServiceDurationMinutes(service) { const map = { manicure:60, 'gel manicure':90, pedicure:60, 'gel pedicure':90, haircut:60, massage:60, facial:60, 'маникюр':60, 'гель маникюр':90, 'педикюр':60, 'гель педикюр':90, 'стрижка':60, 'массаж':60, 'уход':60 }; return map[String(service || '').toLowerCase().trim()] || 60; }\nconst aiText = $('AI Agent').first().json.output || '';\nconst userText = getTelegramText();\nfunction splitRescheduleText(text) {\n  const s = String(text || '');\n  let m = s.match(/\\bfrom\\s+(.+?)\\s+to\\s+(.+)$/i) || s.match(/\\bс\\s+(.+?)\\s+на\\s+(.+)$/i);\n  if (m) return { currentPart: m[1], newPart: m[2] };\n  m = s.match(/\\b(?:move|reschedule|перенести|перенеси)\\b(.+?)\\b(?:to|на)\\b\\s+(.+)$/i);\n  if (m) return { currentPart: m[1], newPart: m[2] };\n  return { currentPart: s, newPart: s };\n}\nconst parts = splitRescheduleText(userText);\nconst allDates = extractDates(userText);\nconst allTimes = extractTimes(userText);\nconst currentDates = extractDates(parts.currentPart);\nconst newDates = extractDates(parts.newPart);\nconst currentTimes = extractTimes(parts.currentPart);\nconst newTimes = extractTimes(parts.newPart);\nconst name = getField(aiText, 'Name') || extractName(userText);\nconst currentDateText = getField(aiText, 'Current Date') || currentDates[0] || allDates[0] || '';\nconst currentTimeText = getField(aiText, 'Current Time') || currentTimes[0] || allTimes[0] || '';\nconst newDateText = getField(aiText, 'New Date') || newDates[0] || allDates[1] || currentDateText;\nconst newTimeText = getField(aiText, 'New Time') || newTimes[0] || allTimes[1] || '';\nif (!name || !currentDateText || !currentTimeText || !newDateText || !newTimeText) throw new Error(`Missing reschedule fields: name=${name}, currentDate=${currentDateText}, currentTime=${currentTimeText}, newDate=${newDateText}, newTime=${newTimeText}`);\nconst currentDate = parseDateToISO(currentDateText);\nconst currentTime = parseTimeTo24(currentTimeText);\nconst newDate = parseDateToISO(newDateText);\nconst newTime = parseTimeTo24(newTimeText);\nreturn [{ json: { reschedule_status: 'READY', name, telegram_id: getTelegramChatId(), current_date: currentDate, current_pretty_date: prettyDate(currentDate), current_time: currentTime, new_date: newDate, new_pretty_date: prettyDate(newDate), new_time: newTime, current_day_start: localDateTime(currentDate, '00:00:00'), current_day_end: localDateTime(addDaysISO(currentDate, 1), '00:00:00'), new_day_start: localDateTime(newDate, '00:00:00'), new_day_end: localDateTime(addDaysISO(newDate, 1), '00:00:00'), new_start_datetime: localDateTime(newDate, newTime), timezone: TZ, timezone_offset: TZ_OFFSET, raw_ai_output: aiText, raw_user_text: userText } }];\n} catch (error) { return [{ json: { reschedule_status: 'PARSE_ERROR', error: error.message, raw_ai_output: $('AI Agent').first().json.output || '', raw_user_text: ($('Telegram Trigger').first().json.message?.text || '') } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1648,
+        176
+      ],
+      "id": "3f45560e-b79a-4f8b-a6f0-f114c1d79f74",
+      "name": "Parse Reschedule Details"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "zhurachkins@gmail.com",
+          "mode": "list",
+          "cachedResultName": "zhurachkins@gmail.com"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $('Parse Reschedule Details').first().json.current_day_start }}",
+        "timeMax": "={{ $('Parse Reschedule Details').first().json.current_day_end }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -1200,
+        192
+      ],
+      "id": "80611033-0fcb-4d11-a24a-929c59a84371",
+      "name": "Get Current Appointment Events",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "kLAsucY4Q4gfePTa",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const reschedule = $('Parse Reschedule Details').first().json;\nconst events = $('Get Current Appointment Events').all().map(item => item.json).filter(e => e && (e.id || e.summary || e.start));\nfunction normalizeText(value) { return String(value || '').toLowerCase().normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^\\p{L}\\p{N}]+/gu, ' ').trim(); }\nfunction fieldFromDescription(description, label) { const re = new RegExp(`${label}\\\\s*:\\\\s*([^\\\\n]+)`, 'i'); const m = String(description || '').match(re); return m ? m[1].trim() : ''; }\nfunction telegramIdFromDescription(description) { return fieldFromDescription(description, 'Telegram ID'); }\nfunction clientFromDescription(description) { return fieldFromDescription(description, 'Client'); }\nfunction eventStartRaw(event) { return event.start?.dateTime || event.start?.date || ''; }\nfunction eventTimeMinutes(value) { const m = String(value || '').match(/T(\\d{2}):(\\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }\nfunction eventDate(value) { return String(value || '').split('T')[0]; }\nfunction isSameDayEvent(event, date) { const raw = eventStartRaw(event); return eventDate(raw) === date || String(raw) === date; }\nfunction minutesFromTime(time) { const [h, m] = String(time || '').split(':').map(Number); return h * 60 + (m || 0); }\nfunction nameMatches(event, name) { const wanted = normalizeText(name); if (!wanted) return false; const summary = normalizeText(event.summary); const description = normalizeText(event.description); const client = normalizeText(clientFromDescription(event.description)); return summary.includes(wanted) || description.includes(wanted) || client.includes(wanted); }\nfunction timeMatches(event, requestedTime, toleranceMinutes = 15) { const actual = eventTimeMinutes(eventStartRaw(event)); if (actual === null) return false; return Math.abs(actual - minutesFromTime(requestedTime)) <= toleranceMinutes; }\nfunction telegramMatches(event, telegramId) { const wanted = String(telegramId || '').trim(); if (!wanted) return false; return telegramIdFromDescription(event.description) === wanted || String(event.description || '').includes(`Telegram ID: ${wanted}`); }\nfunction chooseAppointment(events, details, dateKey, timeKey) {\n  const requestedDate = String(details[dateKey] || '').trim(); const requestedTime = String(details[timeKey] || '').trim(); const candidates = [];\n  for (const event of events) {\n    if (!isSameDayEvent(event, requestedDate)) continue;\n    const scoreParts = { telegram: telegramMatches(event, details.telegram_id), name: nameMatches(event, details.name), time: timeMatches(event, requestedTime, 15), exactTime: timeMatches(event, requestedTime, 0) };\n    let score = 0; if (scoreParts.telegram) score += 6; if (scoreParts.name) score += 3; if (scoreParts.exactTime) score += 3; else if (scoreParts.time) score += 2;\n    if (score >= 5 || (scoreParts.name && scoreParts.time)) candidates.push({ event, score, scoreParts });\n  }\n  candidates.sort((a, b) => b.score - a.score);\n  return candidates[0] || null;\n}\nfunction addMinutesToLocalDateTime(datetime, minutes) {\n  const m = String(datetime).match(/^(\\d{4}-\\d{2}-\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})([+-]\\d{2}:\\d{2})$/);\n  if (!m) { const d = new Date(datetime); d.setMinutes(d.getMinutes() + minutes); return d.toISOString(); }\n  function pad(n) { return String(n).padStart(2, '0'); }\n  function daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); }\n  function addDaysISO(dateISO, days) { let [year, month, day] = dateISO.split('-').map(Number); day += days; while (day > daysInMonth(year, month)) { day -= daysInMonth(year, month); month += 1; if (month > 12) { month = 1; year += 1; } } while (day < 1) { month -= 1; if (month < 1) { month = 12; year -= 1; } day += daysInMonth(year, month); } return `${year}-${pad(month)}-${pad(day)}`; }\n  let total = Number(m[2]) * 60 + Number(m[3]) + minutes; let dayShift = 0;\n  while (total >= 1440) { total -= 1440; dayShift += 1; } while (total < 0) { total += 1440; dayShift -= 1; }\n  return `${addDaysISO(m[1], dayShift)}T${pad(Math.floor(total / 60))}:${pad(total % 60)}:${m[4]}${m[5]}`;\n}\nfunction durationMinutesFromEvent(event) { const startRaw = event.start?.dateTime || event.start?.date; const endRaw = event.end?.dateTime || event.end?.date; if (!startRaw || !endRaw) return 75; const diff = Math.round((new Date(endRaw).getTime() - new Date(startRaw).getTime()) / 60000); return diff > 0 ? diff : 75; }\nconst best = chooseAppointment(events, reschedule, 'current_date', 'current_time');\nconst matched = best?.event || null;\nif (!matched) {\n  const strongButWrongIdentity = events.some(event => isSameDayEvent(event, reschedule.current_date) && nameMatches(event, reschedule.name) && timeMatches(event, reschedule.current_time, 15));\n  return [{ json: { ...reschedule, found_event: false, identity_verified: false, identity_mismatch: strongButWrongIdentity, event_id: '', id: '', error: strongButWrongIdentity ? 'Telegram ID does not match this appointment' : `No appointment found for ${reschedule.name} on ${reschedule.current_date} at ${reschedule.current_time}` } }];\n}\nconst durationMinutes = durationMinutesFromEvent(matched);\nconst newStartDatetime = String(reschedule.new_start_datetime);\nconst newEndDatetime = addMinutesToLocalDateTime(newStartDatetime, durationMinutes);\nreturn [{ json: { ...reschedule, found_event: true, identity_verified: Boolean(best.scoreParts.telegram || (best.scoreParts.name && best.scoreParts.time)), identity_mismatch: false, event_id: matched.id, id: matched.id, event_summary: matched.summary || '', matched_event: matched, match_score: best.score, match_parts: best.scoreParts, original_duration_minutes: durationMinutes, new_start_datetime: newStartDatetime, new_end_datetime: newEndDatetime, start: { dateTime: newStartDatetime, timeZone: 'Asia/Dubai' }, end: { dateTime: newEndDatetime, timeZone: 'Asia/Dubai' } } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1008,
+        192
+      ],
+      "id": "b4bb49d8-5194-4499-903f-a527692e345f",
+      "name": "Find Current Appointment Event"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1a71eb74-53b0-42cf-96c5-899d2ef39395",
+              "leftValue": "={{ $json.found_event }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -832,
+        192
+      ],
+      "id": "c0cab594-44ed-4078-93b8-acebe616984f",
+      "name": "Check Current Appointment Found"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "zhurachkins@gmail.com",
+          "mode": "list",
+          "cachedResultName": "zhurachkins@gmail.com"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $('Find Current Appointment Event').first().json.new_day_start }}",
+        "timeMax": "={{ $('Find Current Appointment Event').first().json.new_day_end }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -624,
+        16
+      ],
+      "id": "d457d933-0efd-4cc7-8d6e-3b4f7c0cb8e0",
+      "name": "Get New Slot Events",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "kLAsucY4Q4gfePTa",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $('Find Current Appointment Event').first().json;\nconst events = $('Get New Slot Events').all().map(item => item.json);\n\nconst WORK_START_HOUR = 10;\nconst WORK_END_HOUR = 21;\n\nfunction minutesFromDubaiDateTime(value) {\n  const match = String(value || '').match(/T(\\d{2}):(\\d{2})/);\n  if (!match) return null;\n\n  return Number(match[1]) * 60 + Number(match[2]);\n}\n\nconst start = new Date(r.new_start_datetime);\nconst end = new Date(r.new_end_datetime);\n\nconst startMinutes = minutesFromDubaiDateTime(r.new_start_datetime);\nconst endMinutes = minutesFromDubaiDateTime(r.new_end_datetime);\n\nconst workStartMinutes = WORK_START_HOUR * 60;\nconst workEndMinutes = WORK_END_HOUR * 60;\n\nconst isOutsideHours =\n  startMinutes === null ||\n  endMinutes === null ||\n  startMinutes < workStartMinutes ||\n  endMinutes > workEndMinutes;\n\nlet hasConflict = false;\n\nfor (const event of events) {\n  if (event.id && event.id === r.event_id) continue;\n\n  const sRaw = event.start?.dateTime || event.start?.date;\n  const eRaw = event.end?.dateTime || event.end?.date;\n\n  if (!sRaw || !eRaw) continue;\n\n  const s = new Date(sRaw);\n  const e = new Date(eRaw);\n\n  if (start < e && end > s) {\n    hasConflict = true;\n    break;\n  }\n}\n\nlet slot_status = 'AVAILABLE';\n\nif (isOutsideHours) {\n  slot_status = 'OUT_OF_HOURS';\n}\n\nif (hasConflict) {\n  slot_status = 'BUSY';\n}\n\nreturn [\n  {\n    json: {\n      ...r,\n      hasConflict,\n      isOutsideHours,\n      slot_status,\n      work_start: '10:00',\n      work_end: '21:00'\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        16
+      ],
+      "id": "1f5ce16d-ba74-4bbf-9742-5d7cf67d033f",
+      "name": "Check New Slot Conflict"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3a43df2d-4aec-4929-adbb-896ffb5f76d3",
+              "leftValue": "={{ $json.slot_status }}",
+              "rightValue": "AVAILABLE",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -208,
+        16
+      ],
+      "id": "5f5097f5-5ea9-48ea-b6d4-ac1c362e77ae",
+      "name": "Check New Slot Available"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "calendar": {
+          "__rl": true,
+          "value": "zhurachkins@gmail.com",
+          "mode": "list",
+          "cachedResultName": "zhurachkins@gmail.com"
+        },
+        "eventId": "={{ $('Find Current Appointment Event').first().json.id }}",
+        "updateFields": {
+          "end": "={{ $('Check New Slot Conflict').first().json.new_end_datetime }}",
+          "start": "={{ $('Check New Slot Conflict').first().json.new_start_datetime }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "3687f443-7d6f-4c1c-9db5-532f733da0c9",
+      "name": "Update Calendar Booking",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "kLAsucY4Q4gfePTa",
+          "name": "Google Calendar OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram=$('Telegram Trigger').first().json; const r=$('Check New Slot Conflict').first().json; const messageText=`✅ Your appointment has been rescheduled.\n\nName: ${r.name}\nNew date: ${r.new_pretty_date}\nNew time: ${String(r.new_time).slice(0,5)}`; return [{json:{channel:'telegram',recipient_id:(telegram.message?.chat?.id || telegram.message?.from?.id || ''),message_text:messageText}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "6722992b-2f9b-4841-aa07-1e82b88ef671",
+      "name": "Prepare Response Reschedule Confirmed"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\nconst r = $('Check New Slot Conflict').first().json;\n\nlet messageText;\n\nif (r.slot_status === 'OUT_OF_HOURS') {\n  messageText =\n`Sorry — ${r.new_pretty_date} at ${String(r.new_time).slice(0,5)} is outside our working hours.\n\nWorking hours:\n10:00 AM – 9:00 PM\n\nPlease choose another time 💅`;\n} else {\n  messageText =\n`Sorry — ${r.new_pretty_date} at ${String(r.new_time).slice(0,5)} is already booked.\n\nPlease send another preferred time 💅`;\n}\n\nreturn [\n  {\n    json: {\n      channel: 'telegram',\n      recipient_id: (telegram.message?.chat?.id || telegram.message?.from?.id || ''),\n      message_text: messageText\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        192
+      ],
+      "id": "cc1b6764-417e-4793-8e07-f3470482c460",
+      "name": "Prepare Response Reschedule Busy"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json;\nconst r = $('Find Current Appointment Event').first().json;\n\nlet messageText;\nif (r.identity_mismatch) {\n  messageText = `Sorry — I can't reschedule this appointment because it belongs to another Telegram account.`;\n} else {\n  messageText = `Sorry — I couldn't find your current appointment.\n\nName: ${r.name}\nCurrent: ${r.current_pretty_date} at ${String(r.current_time).slice(0,5)}\n\nPlease check the details.`;\n}\n\nreturn [{json:{channel:'telegram',recipient_id:(telegram.message?.chat?.id || telegram.message?.from?.id || ''),message_text:messageText}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -624,
+        208
+      ],
+      "id": "55f7822a-9b8a-42d6-98d7-4a9bc59ac6e0",
+      "name": "Prepare Response Reschedule Not Found"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "14437477-e150-4cbd-b8ca-70cf9a35e66b",
+              "leftValue": "={{ $json.reschedule_status }}",
+              "rightValue": "PARSE_ERROR",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1440,
+        176
+      ],
+      "id": "29397f82-74bb-46e8-91f7-82232c17c4e8",
+      "name": "Check Reschedule Parse Error"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "02ad5023-3538-4a39-b295-35d4066a807e",
+              "leftValue": "={{ $json.cancel_status }}",
+              "rightValue": "PARSE_ERROR",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1232,
+        544
+      ],
+      "id": "5a7ed97f-08a7-4ba0-85d4-3609561062d2",
+      "name": "Check Cancel Parse Error"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "telegram-text-present",
+              "leftValue": "={{ Boolean($json.message?.text && String($json.message.text).trim()) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2672,
+        912
+      ],
+      "id": "8d1e7814-6ed0-4a27-8d57-f30f9e60e001",
+      "name": "Check Telegram Text Message"
+    },
+    {
+      "parameters": {
+        "jsCode": "const telegram = $('Telegram Trigger').first().json || {};\nconst message = telegram.message || telegram.edited_message || {};\nconst chatId = message.chat?.id || message.from?.id || '';\nreturn [{ json: { channel: 'telegram', recipient_id: chatId, message_text: 'Please send a text message' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2400,
+        1088
+      ],
+      "id": "7ae6eb49-51af-42fd-af1f-064f662a0f22",
+      "name": "Prepare Response Text Required"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Telegram Text Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Check Reschedule Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Nearby Free Times": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response Busy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Booking Ready": {
+      "main": [
+        [
+          {
+            "node": "Parse Booking Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Response Missing Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Booking Details": {
+      "main": [
+        [
+          {
+            "node": "Check Working Hours",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Working Hours": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response Outside Hours",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Parse Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Parse Error": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response Parse Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Calendar Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Calendar Events": {
+      "main": [
+        [
+          {
+            "node": "Check Slot Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Slot Availability": {
+      "main": [
+        [
+          {
+            "node": "Create Calendar Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Find Nearby Free Times",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Calendar Booking": {
+      "main": [
+        [
+          {
+            "node": "Send Admin New Booking",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Cancel Request": {
+      "main": [
+        [
+          {
+            "node": "Check Cancel Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Booking Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Cancel Details": {
+      "main": [
+        [
+          {
+            "node": "Parse Cancel Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Response Cancel Ask Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Reschedule Request": {
+      "main": [
+        [
+          {
+            "node": "Check Reschedule Details.",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Cancel Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Reschedule Details.": {
+      "main": [
+        [
+          {
+            "node": "Parse Reschedule Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Response Reschedule Ask Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Slot Conflict": {
+      "main": [
+        [
+          {
+            "node": "Check Slot Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Universal Send": {
+      "main": [
+        [
+          {
+            "node": "Send a Client message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Busy": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Outside Hours": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Missing Info": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Parse Error": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Cancel Ask Details": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Reschedule Ask Details": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Cancel Details": {
+      "main": [
+        [
+          {
+            "node": "Check Cancel Parse Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Cancel Day Events": {
+      "main": [
+        [
+          {
+            "node": "Find Cancel Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Cancel Event": {
+      "main": [
+        [
+          {
+            "node": "Check Cancel Event Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Cancel Event Found": {
+      "main": [
+        [
+          {
+            "node": "Delete Calendar Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Response Cancel Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Calendar Booking": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response Cancel Confirmed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Cancel Confirmed": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Admin Cancel Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Cancel Not Found": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Reschedule Details": {
+      "main": [
+        [
+          {
+            "node": "Check Reschedule Parse Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current Appointment Events": {
+      "main": [
+        [
+          {
+            "node": "Find Current Appointment Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Current Appointment Event": {
+      "main": [
+        [
+          {
+            "node": "Check Current Appointment Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Current Appointment Found": {
+      "main": [
+        [
+          {
+            "node": "Get New Slot Events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Response Reschedule Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get New Slot Events": {
+      "main": [
+        [
+          {
+            "node": "Check New Slot Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check New Slot Conflict": {
+      "main": [
+        [
+          {
+            "node": "Check New Slot Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check New Slot Available": {
+      "main": [
+        [
+          {
+            "node": "Update Calendar Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Response Reschedule Busy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Calendar Booking": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response Reschedule Confirmed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Reschedule Confirmed": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Admin Reschedule Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Reschedule Busy": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Reschedule Not Found": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Reschedule Parse Error": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response Reschedule Ask Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Current Appointment Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Cancel Parse Error": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response Cancel Ask Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Cancel Day Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Telegram Text Message": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Response Text Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response Text Required": {
+      "main": [
+        [
+          {
+            "node": "Universal Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "c9a90048-c3bb-4a2a-a0ec-3f5e40e1c391",
+  "meta": {
+    "instanceId": "43c331c7f3f559d43e4d9a9c4a1d42b27a7398b5bffa56fc5b04d3fa66cb5661"
+  },
+  "id": "W03FlkHWuhL5Hszw",
+  "tags": []
+}

@@ -88,3 +88,27 @@ Workflow rules:
 
 \- Return complete replacements when changing code
 
+
+
+Read KNOWLEDGE.md before analyzing workflows.
+
+
+
+Template usage rules:
+
+
+
+\- Use external templates only as reference patterns
+
+\- Do not copy full external workflows into this project
+
+\- Adapt only verified node patterns compatible with current n8n Cloud
+
+\- Before using a template pattern, explain why it fits this workflow
+
+\- Prefer minimal changes to the existing workflow
+
+
+
+Read TESTS.md before proposing or applying workflow changes.
+
